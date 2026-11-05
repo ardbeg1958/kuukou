@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#070b1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="夜の滑走路">
+<meta name="application-name" content="空港の夜の滑走路">
+<meta name="description" content="夜の空港で、灯火のあいだを飛行機が静かに降りては飛び立つ鑑賞用アプリ。">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>空港の夜の滑走路</title>
+<style>
+html,body{margin:0;height:100%;background:#070b1a;overflow:hidden;touch-action:manipulation;-webkit-user-select:none;user-select:none;font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;color:#e6ecf4}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#title{position:fixed;left:0;right:0;top:30%;text-align:center;pointer-events:none;transition:opacity 3s;letter-spacing:.4em;text-shadow:0 0 12px #000}
+#title h1{font-weight:300;font-size:clamp(22px,5vw,40px);margin:0}
+#title p{font-size:clamp(11px,2.6vw,14px);opacity:.75;margin:.8em 0 0;letter-spacing:.2em}
+.btn{position:fixed;bottom:calc(14px + env(safe-area-inset-bottom));width:44px;height:44px;border-radius:22px;border:1px solid rgba(220,235,255,.25);background:rgba(8,14,26,.55);color:#e6ecf4;font-size:20px;display:flex;align-items:center;justify-content:center;transition:opacity .8s;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);cursor:pointer}
+#gear{right:calc(14px + env(safe-area-inset-right))}
+#snd{right:calc(66px + env(safe-area-inset-right))}
+.hide{opacity:0;pointer-events:none}
+#panel{position:fixed;right:calc(14px + env(safe-area-inset-right));bottom:calc(68px + env(safe-area-inset-bottom));width:min(300px,calc(100vw - 28px));max-height:calc(100vh - 100px);overflow:auto;background:rgba(10,16,28,.84);border:1px solid rgba(220,235,255,.18);border-radius:14px;padding:14px 16px;box-sizing:border-box;font-size:14px;transition:opacity .4s;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+#panel h2{font-size:15px;font-weight:500;margin:0 0 10px;letter-spacing:.15em}
+.row{margin:10px 0}
+.row label{display:block;font-size:12px;opacity:.7;margin-bottom:5px}
+.seg{display:flex;gap:4px}
+.seg button{flex:1;padding:7px 0;border-radius:8px;border:1px solid rgba(220,235,255,.2);background:rgba(255,255,255,.04);color:#e6ecf4;font-size:13px}
+.seg button.on{background:rgba(140,190,255,.25);border-color:rgba(170,205,255,.6)}
+input[type=range]{width:100%;accent-color:#8cb8ff}
+#info{font-size:11px;opacity:.55;margin-top:10px;line-height:1.6}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title"><h1>空港の夜の滑走路</h1><p>— 光の道に、降りて、飛び立つ —</p></div>
+<div id="snd" class="btn hide">🔇</div>
+<div id="gear" class="btn hide">⚙︎</div>
+<div id="panel" class="hide">
+ <h2>設定</h2>
+ <div class="row"><label>音（ジェットの響き・風）</label><div class="seg" data-k="sound"><button data-v="1">オン</button><button data-v="0">オフ</button></div></div>
+ <div class="row"><label>音量</label><input id="vol" type="range" min="0" max="1" step="0.01"></div>
+ <div class="row"><label>速さ</label><div class="seg" data-k="speed"><button data-v="0.6">ゆっくり</button><button data-v="1">ふつう</button><button data-v="1.6">はやい</button></div></div>
+ <div class="row"><label>発着の頻度</label><div class="seg" data-k="freq"><button data-v="0">少なめ</button><button data-v="1">ふつう</button><button data-v="2">多め</button></div></div>
+ <div class="row"><label>天気</label><div class="seg" data-k="wx"><button data-v="0">晴れ</button><button data-v="1">ときどき雨・霧</button><button data-v="2">雨</button><button data-v="3">霧</button></div></div>
+ <div class="row"><label>時間の移り変わり</label><div class="seg" data-k="cycle"><button data-v="1">あり（夜明けも）</button><button data-v="0">ずっと夜</button></div></div>
+ <div id="info"></div>
+</div>
+<script>
+'use strict';
+const KEY='kuukou_v1';
+const S=Object.assign({sound:0,vol:0.6,speed:1,freq:1,wx:1,cycle:1},(()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return{}}})());
+S.sound=0;
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+const Q=new URLSearchParams(location.search);
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const R=Math.random,TAU=Math.PI*2,clamp=(v,a,b)=>v<a?a:v>b?b:v,lerp=(a,b,t)=>a+(b-a)*t,sm=t=>{t=clamp(t,0,1);return t*t*(3-2*t)};
+let W,H,DPR,HZ,RY,RW,TY,SC,THR,REND,stars=[],city=[],bld=[];
+// glow sprites
+const SPR={};function sprite(name,r,gc,b){const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d');const gr=x.createRadialGradient(32,32,0,32,32,32);gr.addColorStop(0,'rgba(255,255,255,1)');gr.addColorStop(.08,`rgba(${r},${gc},${b},1)`);gr.addColorStop(.3,`rgba(${r},${gc},${b},.35)`);gr.addColorStop(1,`rgba(${r},${gc},${b},0)`);x.fillStyle=gr;x.fillRect(0,0,64,64);SPR[name]=c;}
+sprite('w',255,240,210);sprite('y',255,200,110);sprite('b',80,130,255);sprite('g',80,255,140);sprite('r',255,60,50);sprite('s',230,240,255);sprite('o',255,170,80);
+let BLOOM=1;
+function L(name,x,y,r,a){if(a<=0.01)return;g.globalAlpha=Math.min(1,a);const s=r*BLOOM;g.drawImage(SPR[name],x-s,y-s,s*2,s*2);}
+function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;g.setTransform(DPR,0,0,DPR,0,0);
+ const port=H>W;HZ=H*(port?.5:.52);SC=Math.min(W,H*1.3)/900;
+ RY=HZ+(H-HZ)*(port?.42:.46);RW=(H-HZ)*.07;TY=HZ+(H-HZ)*.2;
+ THR=W*.86;REND=W*.04;
+ stars=[];for(let i=0;i<Math.round(W*HZ/2200);i++)stars.push({x:R()*W,y:R()*HZ*.92,r:R()*R()*1.5+.3,p:R()*TAU,s:.5+R()*2});
+ city=[];let x=-10;while(x<W+10){const w=(6+R()*22)*SC,h=(4+R()*R()*40)*SC;city.push({x,w,h,win:Array.from({length:Math.round(w*h/(18*SC*SC))},()=>[R(),R(),R()<.55])});x+=w+R()*3*SC;}
+ bld=[];
+}
+addEventListener('resize',resize);
+// ---------- state ----------
+const CYCLE=600;
+let T=0,phase=Q.has('t')?+Q.get('t'):.0,rainA=Q.has('rain')?+Q.get('rain'):0,fogA=Q.has('fog')?+Q.get('fog'):0,rainT=0,fogT=0,wxNext=30;
+let planes=[],nextOp=Q.has('shot')?99:4,lastOp='to',drops=[];
+function dawnF(){if(!S.cycle&&!Q.has('t'))return 0;const p=phase%1;return sm((p-.5)/.14)*sm((.92-p)/.1);}
+// plane: kind 'land' or 'to'
+const GATE=()=>W*.5;
+function newPlane(kind){const p={kind,st:kind==='land'?'app':'park',t:0,x:0,y:0,alt:0,k:1,v:0,a:kind==='land'?1:0,
+ strobe:R()*2,bcn:R()*2,big:R()<.35,col:['#d8dde6','#e4e4e8','#cfd6e2'][R()*3|0],tail:['#2a4a8c','#b02a2a','#1f6b5a','#c8a030'][R()*4|0],rev:0,thr:0,park:0};
+ if(kind==='land'){p.u=0}else{p.x=GATE()+(R()-.5)*W*.12;p.y=TY;p.park=4+R()*3;p.a=0}
+ planes.push(p);return p;}
+function runwayBusy(){return planes.some(p=>p.st==='app'||p.st==='roll'||p.st==='line'||p.st==='tor'||(p.st==='climb'&&p.alt<H*.08))}
+function update(p,dt){const sp=S.speed,V0=170*SC;p.t+=dt*sp;
+ switch(p.st){
+ case 'app':{p.u+=dt*sp/22;const u=p.u;p.x=lerp(W*1.15,THR-W*.06,u);p.alt=lerp(H*.36,0,u);p.k=lerp(.18,1,Math.pow(u,.8));p.y=RY;p.thr=.35;
+  if(u>=1){p.st='roll';p.v=V0*.9;p.alt=0;p.td=1.2;touchSound();}break;}
+ case 'roll':{p.k=1;p.y=RY;p.td=Math.max(0,(p.td||0)-dt);p.rev=p.v>V0*.25?1:Math.max(0,p.rev-dt);p.thr=p.rev?.9:.25;
+  p.v=Math.max(22*SC,p.v-dt*sp*V0*.16);p.x-=p.v*dt*sp;if(p.x<W*.2){p.st='exit';p.t=0;}break;}
+ case 'exit':{p.rev=0;p.thr=.2;const u=clamp(p.t/5,0,1);p.x-=22*SC*dt*sp*(1-u*.6);p.y=lerp(RY,TY,sm(u));p.k=lerp(1,.8,sm(u));if(u>=1){p.st='taxi';p.goal=GATE()+(R()-.5)*W*.1;p.dir=1;}break;}
+ case 'taxi':{p.thr=.18;p.k=.8;p.y=TY;const d=p.goal-p.x;const s=Math.sign(d);p.dir=s;p.x+=s*Math.min(Math.abs(d),26*SC*dt*sp);if(Math.abs(d)<1){if(p.kind==='land'){p.st='gate';p.t=0}else{p.st='enter';p.t=0}}break;}
+ case 'gate':{p.thr=Math.max(0,.18-p.t*.05);p.a=clamp(1-(p.t-6)/3,0,1);if(p.a<=0)p.dead=1;break;}
+ case 'park':{p.k=.8;p.y=TY;p.a=clamp(p.t/3,0,1);p.thr=.1+p.a*.08;if(p.t>p.park){p.st='taxi';p.goal=THR-W*.02;}break;}
+ case 'enter':{const u=clamp(p.t/5,0,1);p.y=lerp(TY,RY,sm(u));p.k=lerp(.8,1,sm(u));p.dir=-1;p.x+=6*SC*dt*sp;p.thr=.2;if(u>=1){if(runwayBusy2(p)){p.t=5}else{p.st='line';p.t=0}}break;}
+ case 'line':{p.thr=lerp(.2,1,clamp(p.t/4,0,1));if(p.t>4){p.st='tor';p.v=0}break;}
+ case 'tor':{p.thr=1;p.v+=dt*sp*V0*.22;p.x-=p.v*dt*sp;if(p.v>V0*1.05){p.st='climb';p.t=0}break;}
+ case 'climb':{p.thr=1;p.x-=p.v*dt*sp;p.v+=dt*sp*SC*6;p.alt+=p.v*dt*sp*(.14+Math.min(.12,p.t*.03));p.k=Math.max(.25,1-p.t*.05);if(p.x<-300*SC||p.alt>H)p.dead=1;break;}
+ }
+ p.strobe+=dt;p.bcn+=dt;}
+function runwayBusy2(me){return planes.some(p=>p!==me&&(p.st==='app'&&p.u>.4||p.st==='roll'||p.st==='line'||p.st==='tor'))}
+function schedule(dt){nextOp-=dt*S.speed;if(nextOp>0)return;
+ const gap=[60,34,18][S.freq];
+ if(runwayBusy()||planes.length>4){nextOp=4;return;}
+ const k=lastOp==='to'?'land':'to';newPlane(k);lastOp=k;nextOp=gap*(.7+R()*.6);}
+// ---------- drawing ----------
+function sky(dw){const gr=g.createLinearGradient(0,0,0,HZ);
+ gr.addColorStop(0,`rgb(${lerp(4,70,dw)|0},${lerp(7,105,dw)|0},${lerp(20,165,dw)|0})`);
+ gr.addColorStop(.7,`rgb(${lerp(12,170,dw)|0},${lerp(18,150,dw)|0},${lerp(42,175,dw)|0})`);
+ gr.addColorStop(1,`rgb(${lerp(48,255,dw)|0},${lerp(36,175,dw)|0},${lerp(52,120,dw)|0})`);g.fillStyle=gr;g.fillRect(0,0,W,HZ+1);
+ // city glow
+ const cg=g.createRadialGradient(W*.25,HZ,0,W*.25,HZ,W*.6);cg.addColorStop(0,`rgba(255,150,70,${.28*(1-dw)})`);cg.addColorStop(1,'rgba(255,150,70,0)');g.fillStyle=cg;g.fillRect(0,0,W,HZ);}
+function drawStars(dw){const a=(1-dw*1.3)*(1-fogA*.8)*(1-rainA*.7);if(a<=0)return;g.fillStyle='#fff';for(const s of stars){const tw=.6+.4*Math.sin(T*s.s+s.p);g.globalAlpha=clamp(a*tw*(.4+.6*s.y/HZ*0+.6),0,1)*(1-Math.pow(s.y/HZ,3)*.8);g.fillRect(s.x,s.y,s.r,s.r);}g.globalAlpha=1;}
+function skyline(dw){const c=`rgb(${lerp(10,80,dw)|0},${lerp(12,82,dw)|0},${lerp(22,100,dw)|0})`;g.fillStyle=c;
+ for(const b of city)g.fillRect(b.x,HZ-b.h,b.w,b.h+1);
+ g.save();g.globalCompositeOperation='lighter';const wa=.75*(1-dw*.8)*(1-fogA*.6);
+ for(const b of city)for(const w of b.win)if(w[2]){g.fillStyle=`rgba(255,${200+w[0]*40|0},${120+w[1]*80|0},${wa*(.4+.6*w[0])})`;g.fillRect(b.x+w[0]*b.w,HZ-b.h+w[1]*b.h*.95,1.2*SC+.4,1.2*SC+.4);}
+ // aircraft-warning red lights on tall ones
+ for(const b of city)if(b.h>28*SC){L('r',b.x+b.w/2,HZ-b.h,3*SC+1.5,(.5+.5*Math.sin(T*2+b.x))*.9*(1-dw*.5));}
+ g.restore();}
+function ground(dw){const gr=g.createLinearGradient(0,HZ,0,H);gr.addColorStop(0,`rgb(${lerp(10,70,dw)|0},${lerp(12,72,dw)|0},${lerp(20,80,dw)|0})`);gr.addColorStop(1,`rgb(${lerp(3,28,dw)|0},${lerp(5,36,dw)|0},${lerp(8,34,dw)|0})`);g.fillStyle=gr;g.fillRect(0,HZ,W,H-HZ);
+ // taxiway & apron surface
+ g.fillStyle=`rgba(${lerp(30,110,dw)|0},${lerp(32,112,dw)|0},${lerp(40,120,dw)|0},${.55+rainA*.2})`;g.fillRect(0,TY-RW*.35,W,RW*.7);
+ // connectors
+ for(const x of[W*.18,THR-W*.02]){g.beginPath();g.moveTo(x-RW*.5,TY);g.lineTo(x+RW*.5,TY);g.lineTo(x+RW,RY);g.lineTo(x-RW*1.2,RY);g.fill();}
+ // runway
+ const rg=g.createLinearGradient(0,RY-RW,0,RY+RW);const wet=rainA*.25;rg.addColorStop(0,`rgb(${lerp(26,95,dw)+wet*80|0},${lerp(28,96,dw)+wet*90|0},${lerp(34,104,dw)+wet*110|0})`);rg.addColorStop(1,`rgb(${lerp(18,80,dw)|0},${lerp(19,82,dw)|0},${lerp(24,88,dw)|0})`);
+ g.fillStyle=rg;g.fillRect(REND-W*.1,RY-RW,THR-REND+W*.1+W*.005,RW*2);
+ // markings
+ g.fillStyle=`rgba(230,235,240,${.14+dw*.35})`;for(let x=REND+W*.02;x<THR-W*.03;x+=W*.035)g.fillRect(x,RY-.6,W*.016,1.2);
+ for(let i=-3;i<=3;i++)if(i)g.fillRect(THR-W*.022,RY+i*RW*.24-.7,W*.016,1.4);
+ // foreground fence
+ g.fillStyle=`rgb(${lerp(2,20,dw)|0},${lerp(3,24,dw)|0},${lerp(6,22,dw)|0})`;const fy=H-(H-RY)*.28;g.fillRect(0,fy+6*SC,W,H);g.strokeStyle=`rgba(${lerp(40,90,dw)|0},${lerp(45,95,dw)|0},${lerp(55,100,dw)|0},.35)`;g.lineWidth=.6;g.beginPath();for(let x=0;x<W;x+=6*SC){g.moveTo(x,fy);g.lineTo(x+12*SC,fy+16*SC);g.moveTo(x+12*SC,fy);g.lineTo(x,fy+16*SC);}g.moveTo(0,fy);g.lineTo(W,fy);g.stroke();g.fillStyle=g.strokeStyle;for(let x=0;x<W;x+=60*SC)g.fillRect(x,fy-2*SC,1.5*SC,22*SC);
+ // terminal & tower
+ const tc=`rgb(${lerp(14,90,dw)|0},${lerp(16,92,dw)|0},${lerp(26,108,dw)|0})`;g.fillStyle=tc;
+ const tx=W*.34,tw=W*.34,th=Math.max(14,Math.min((TY-HZ)*.7,H*.06));g.fillRect(tx,TY-RW*.4-th,tw,th);g.fillRect(tx+tw*.1,TY-RW*.4-th-th*.25,tw*.5,th*.26);
+ g.save();g.globalCompositeOperation='lighter';
+ for(let i=0;i<40;i++){g.fillStyle=`rgba(255,226,170,${(.55-dw*.4)*(i%7==3?.3:1)})`;g.fillRect(tx+tw*.02+i*tw*.024,TY-RW*.4-th*.62,tw*.015,th*.22);}
+ for(let i=0;i<6;i++)L('y',tx+tw*(.08+i*.17),TY-RW*.4-th-2,6*SC+2,.6*(1-dw*.7)); // apron floodlights
+ g.restore();
+ // apron flood glow
+ g.save();g.globalCompositeOperation='lighter';const ag=g.createRadialGradient(tx+tw/2,TY,0,tx+tw/2,TY,tw*.7);ag.addColorStop(0,`rgba(255,200,130,${.16*(1-dw)})`);ag.addColorStop(1,'rgba(255,200,130,0)');g.fillStyle=ag;g.save();g.translate(tx+tw/2,TY);g.scale(1,.25);g.translate(-tx-tw/2,-TY);g.fillRect(tx-tw,TY-tw,tw*3,tw*2);g.restore();g.restore();
+ // tower
+ const ox=W*.74,oh=Math.min((TY-HZ)*2.4,H*.17)+30*SC,ob=TY-RW*.4;g.fillStyle=tc;g.fillRect(ox-4*SC,ob-oh,8*SC,oh);
+ g.beginPath();g.moveTo(ox-13*SC,ob-oh);g.lineTo(ox+13*SC,ob-oh);g.lineTo(ox+9*SC,ob-oh+8*SC);g.lineTo(ox-9*SC,ob-oh+8*SC);g.fill();
+ g.fillStyle=`rgba(120,200,190,${.75-dw*.4})`;g.fillRect(ox-12*SC,ob-oh-7*SC,24*SC,7*SC);g.fillStyle=tc;g.fillRect(ox-13*SC,ob-oh-10*SC,26*SC,3*SC);g.fillRect(ox-.6,ob-oh-18*SC,1.2,8*SC);
+ g.save();g.globalCompositeOperation='lighter';L('r',ox,ob-oh-18*SC,3*SC+1.5,.6+.4*Math.sin(T*3));g.restore();
+ // rotating beacon (white/green alternating)
+ const bx=W*.9,by=TY-RW*.4-oh*.75;g.fillStyle=tc;g.fillRect(bx-1.5*SC,by,3*SC,TY-by-RW*.4);
+ const ph=(T*.8)%1;g.save();g.globalCompositeOperation='lighter';const f=Math.pow(Math.max(0,Math.cos(ph*TAU*2)),12);
+ L(ph<.5?'g':'w',bx,by,(8+40*f)*SC+3,.4+.6*f);g.restore();}
+function lights(dw){g.save();g.globalCompositeOperation='lighter';const vis=(1-dw*.55);const fz=1+fogA*1.2;
+ // runway edge lights (far & near rows)
+ const n=Math.round((THR-REND)/(W*.022));for(let i=0;i<=n;i++){const x=lerp(REND,THR,i/n);const endZ=x<REND+(THR-REND)*.12;
+  L(endZ?'y':'w',x,RY-RW,(2.2*SC+1)*fz,.8*vis);L(endZ?'y':'w',x,RY+RW,(3.2*SC+1.4)*fz,.9*vis);
+  // centerline
+  const cl=(THR-x)/(THR-REND);const cc=cl>.9?(i%2?'r':'w'):cl>.75&&i%2?'r':'w';if(i%2==0||cl>.75)L(cc,x,RY,(1.8*SC+.9)*fz,.55*vis);}
+ // threshold green, end red
+ for(let i=-4;i<=4;i++){L('g',THR+2,RY+i*RW*.22,(2.6*SC+1.2)*fz,.95*vis);L('r',REND-2,RY+i*RW*.22,(2.6*SC+1.2)*fz,.9*vis);}
+ // approach lights
+ const na=10,sp=(W-THR+W*.02)/na;const rab=(T*2)%1;
+ for(let i=1;i<=na;i++){const x=THR+i*sp;for(let j=-2;j<=2;j++)L('w',x,RY+j*RW*.12,(1.8*SC+.9)*fz,.55*vis);
+  if(i%4==0)for(let j=-6;j<=6;j++)L('w',x,RY+j*RW*.12,(1.6*SC+.8)*fz,.5*vis);
+  const k=Math.round((1-rab)*na*1.5);if(i===k)L('s',x,RY,(18*SC+6)*fz,1);}
+ // taxiway blue edge + green center
+ for(let x=-W*.02;x<W*1.02;x+=W*.03){L('b',x,TY-RW*.38,(2*SC+1)*fz,.9*vis);L('b',x+W*.015,TY+RW*.38,(2.4*SC+1)*fz,.95*vis);}
+ for(const cx of[W*.18,THR-W*.02])for(let u=0;u<=1;u+=.2)L('g',lerp(cx,cx+(cx<W*.5?-RW*.1:RW*.2),u),lerp(TY,RY-RW*.5,u),(1.6*SC+.8)*fz,.8*vis);
+ // PAPI lights near threshold (left of runway far side)
+ const pa=[0,1,2,3].map(i=>i<2?'w':'r');pa.forEach((c,i)=>L(c,THR-W*.06+i*W*.008,RY+RW*1.5,(2.6*SC+1.2)*fz,.9*vis));
+ g.restore();
+ // reflections on wet runway
+ if(rainA>.05){g.save();g.globalCompositeOperation='lighter';g.globalAlpha=1;for(let i=0;i<=n;i+=1){const x=lerp(REND,THR,i/n);g.fillStyle=`rgba(255,235,200,${.12*rainA})`;g.fillRect(x-1,RY+RW+2,2,RW*.9);}g.restore();}}
+function drawPlane(p,dw){if(p.a<=0)return;const k=p.k*SC*1.7*(p.big?1.2:1),x=p.x,y=p.y-p.alt-(p.alt>0?0:0);const d=p.dir||(-1);g.save();g.globalAlpha=p.a;g.translate(x,y);g.scale(d<0?1:-1,1);
+ const pitch=p.st==='climb'?-Math.min(.16,p.t*.06):p.st==='app'?-.03:0;g.rotate(pitch);
+ const len=70*k,hgt=8*k,base=-hgt-4*k;const body=`rgb(${lerp(30,190,dw)|0},${lerp(32,195,dw)|0},${lerp(40,205,dw)|0})`;
+ // gear
+ if(p.alt<H*.12){g.fillStyle='#0c0e12';g.fillRect(-len*.32,base+hgt,1.5*k,4*k);g.fillRect(len*.02,base+hgt,2*k,4*k);g.fillRect(len*.07,base+hgt,2*k,4*k);}
+ g.fillStyle=body;g.beginPath();g.moveTo(-len*.5,base+hgt*.55);g.quadraticCurveTo(-len*.5,base,-len*.38,base);g.lineTo(len*.36,base);g.lineTo(len*.5,base-hgt*.9);g.lineTo(len*.52,base-hgt*.9);g.lineTo(len*.5,base+hgt*.45);g.lineTo(len*.3,base+hgt);g.lineTo(-len*.42,base+hgt);g.quadraticCurveTo(-len*.5,base+hgt,-len*.5,base+hgt*.55);g.fill();
+ // tail fin
+ g.beginPath();g.moveTo(len*.3,base);g.lineTo(len*.42,base-hgt*2.3);g.lineTo(len*.5,base-hgt*2.3);g.lineTo(len*.5,base);g.fill();
+ g.fillStyle=`rgba(${parseInt(p.tail.slice(1,3),16)},${parseInt(p.tail.slice(3,5),16)},${parseInt(p.tail.slice(5,7),16)},${.35+dw*.6})`;g.beginPath();g.moveTo(len*.34,base-hgt*.6);g.lineTo(len*.42,base-hgt*2.3);g.lineTo(len*.5,base-hgt*2.3);g.lineTo(len*.5,base-hgt*.6);g.fill();
+ // wing & engine
+ g.fillStyle=`rgb(${lerp(20,150,dw)|0},${lerp(22,155,dw)|0},${lerp(30,165,dw)|0})`;g.beginPath();g.moveTo(-len*.08,base+hgt*.7);g.lineTo(len*.18,base+hgt*.95);g.lineTo(len*.08,base+hgt*.95);g.fill();
+ g.fillRect(-len*.08,base+hgt*.85,len*.13,hgt*.55);
+ // windows
+ g.globalCompositeOperation='lighter';g.fillStyle=`rgba(255,225,170,${.55*(1-dw*.7)})`;for(let i=0;i<22;i++)g.fillRect(-len*.36+i*len*.03,base+hgt*.3,len*.012,hgt*.16);
+ g.fillStyle=`rgba(255,240,210,${.5*(1-dw*.6)})`;g.fillRect(-len*.47,base+hgt*.22,len*.025,hgt*.18);
+ // logo light on tail
+ g.fillStyle=`rgba(255,255,240,${.12})`;g.fillRect(len*.36,base-hgt*1.6,len*.12,hgt*1.2);
+ g.restore();
+ // lights in screen space
+ g.save();g.globalCompositeOperation='lighter';const pt=(lx,ly)=>{const c=Math.cos(pitch),s=Math.sin(pitch);const sx=(d<0?1:-1);return[x+sx*(lx*c-ly*s),y+(lx*s+ly*c)]};
+ const on=1;const nr=pt(-len*0,base+hgt*.9);
+ L(d<0?'r':'g',nr[0],nr[1],3.5*k+1.5,.95*p.a);L(d<0?'g':'r',nr[0]+4*k*(d<0?1:-1),nr[1]-1*k,2.5*k+1,.5*p.a);
+ const st=p.strobe%1.2;if(p.st!=='gate'&&p.st!=='park'&&(st<.05||(st>.14&&st<.19))){const s1=pt(0,base+hgt*.9);L('s',s1[0],s1[1],14*k+5,1);const s2=pt(len*.5,base-hgt*.9);L('s',s2[0],s2[1],10*k+4,.9);}
+ const bc=p.bcn%1;if(bc<.12){const b1=pt(0,base-1*k);L('r',b1[0],b1[1],6*k+2,.9*p.a);const b2=pt(0,base+hgt+1*k);L('r',b2[0],b2[1],5*k+2,.8*p.a);}
+ const tl=pt(len*.52,base+hgt*.3);L('w',tl[0],tl[1],2.5*k+1,.7*p.a);
+ // landing / taxi lights
+ const ll=(p.st==='app'||p.st==='roll'||p.st==='tor'||p.st==='line'||(p.st==='climb'&&p.alt<H*.25))?1:(p.st==='taxi'||p.st==='exit'||p.st==='enter')?.45:0;
+ if(ll>0){const nose=pt(-len*.42,base+hgt*1.1);const big=(p.st==='app'?(25+45*(1-p.u)):18)*k+8;L('w',nose[0],nose[1],big,ll*(.9+fogA*.1));
+  const bg=g.createLinearGradient(nose[0],nose[1],nose[0]-(d<0?1:-1)*W*.25,nose[1]);bg.addColorStop(0,`rgba(255,245,220,${.25*ll*(1+fogA)*(1-dw*.8)})`);bg.addColorStop(1,'rgba(255,245,220,0)');g.fillStyle=bg;g.beginPath();const sx=(d<0?-1:1)*W*.25;g.moveTo(nose[0],nose[1]-2*k);g.lineTo(nose[0]+sx,nose[1]-30*k-W*.02*(p.alt>0?1:0)+ (p.st==='app'?W*.06:0));g.lineTo(nose[0]+sx,nose[1]+20*k+(p.st==='app'?W*.09:0));g.lineTo(nose[0],nose[1]+2*k);g.fill();
+  if(p.alt<H*.1){const gy=p.y;const gg=g.createRadialGradient(nose[0]-(d<0?1:-1)*40*k,gy,0,nose[0]-(d<0?1:-1)*40*k,gy,90*k);gg.addColorStop(0,`rgba(255,240,210,${.25*ll})`);gg.addColorStop(1,'rgba(255,240,210,0)');g.fillStyle=gg;g.save();g.translate(nose[0],gy);g.scale(1,.2);g.translate(-nose[0],-gy);g.fillRect(nose[0]-200*k,gy-100*k,400*k,200*k);g.restore();}}
+ // touchdown smoke / reverse thrust shimmer
+ if(p.td>0){const tx=pt(len*.05,base+hgt+4*k);g.globalCompositeOperation='source-over';g.fillStyle=`rgba(180,180,190,${.25*p.td})`;g.beginPath();g.arc(tx[0]+(1.2-p.td)*30*k,tx[1]-3*k,(4+(1.2-p.td)*10)*k,0,TAU);g.fill();g.globalCompositeOperation='lighter';}
+ if(p.rev>0||p.thr>.8){const e=pt(len*.05,base+hgt*1.1);for(let i=0;i<6;i++){g.fillStyle=`rgba(255,200,150,${.05*(p.rev||p.thr)})`;g.fillRect(e[0]+(d<0?1:-1)*(i*6*k+Math.sin(T*30+i)*2*k),e[1]-2*k+Math.sin(T*23+i)*k,5*k,3*k);}}
+ g.restore();}
+function weather(dt,dw){if(rainA>.02){const want=Math.round(W*H/2500*rainA);while(drops.length<want)drops.push({x:R()*W,y:R()*H,v:(500+R()*300),l:8+R()*10});
+  g.save();g.strokeStyle=`rgba(190,205,230,${.25*rainA})`;g.lineWidth=1;g.beginPath();for(const d of drops){d.y+=d.v*dt;d.x-=d.v*dt*.1;if(d.y>H){d.y=-10;d.x=R()*W*1.1;}g.moveTo(d.x,d.y);g.lineTo(d.x+d.l*.1,d.y-d.l);}g.stroke();g.restore();drops.length=Math.min(drops.length,want);}
+ else drops.length=0;
+ if(fogA>.02){g.save();const c=dw>.3?'205,200,205':'120,130,155';const gr=g.createLinearGradient(0,HZ-H*.25,0,H);gr.addColorStop(0,`rgba(${c},0)`);gr.addColorStop(.35,`rgba(${c},${.45*fogA})`);gr.addColorStop(1,`rgba(${c},${.25*fogA})`);g.fillStyle=gr;g.fillRect(0,0,W,H);
+  for(let i=0;i<4;i++){const y=HZ+i*(H-HZ)*.25,x=((T*(5+i*3)*SC+i*W*.37)%(W*1.6))-W*.3;const rg=g.createRadialGradient(x,y,0,x,y,W*.6);rg.addColorStop(0,`rgba(${c},${.22*fogA})`);rg.addColorStop(1,`rgba(${c},0)`);g.fillStyle=rg;g.save();g.translate(x,y);g.scale(1,.2);g.translate(-x,-y);g.beginPath();g.arc(x,y,W*.6,0,TAU);g.fill();g.restore();}g.restore();}}
+// ---------- audio ----------
+let AC=null,M,jetG,jetF,windG,whG,whO;
+function initAudio(){if(AC)return;AC=new (window.AudioContext||window.webkitAudioContext)();M=AC.createGain();M.gain.value=0;M.connect(AC.destination);
+ const nb=AC.createBuffer(1,AC.sampleRate*4,AC.sampleRate);const d=nb.getChannelData(0);let b=0;for(let i=0;i<d.length;i++){b=(b+.02*(R()*2-1))/1.02;d[i]=b*3.5+(R()*2-1)*.05;}
+ const mk=(f,q,type)=>{const s=AC.createBufferSource();s.buffer=nb;s.loop=true;const fl=AC.createBiquadFilter();fl.type=type;fl.frequency.value=f;fl.Q.value=q;const gg=AC.createGain();gg.gain.value=0;s.connect(fl);fl.connect(gg);gg.connect(M);s.start();return[gg,fl];};
+ [jetG,jetF]=mk(260,.7,'lowpass');[windG]=mk(500,1,'bandpass');
+ whO=AC.createOscillator();whO.type='sine';whO.frequency.value=1800;whG=AC.createGain();whG.gain.value=0;whO.connect(whG);whG.connect(M);whO.start();}
+function touchSound(){if(!AC||!S.sound)return;const t=AC.currentTime;const o=AC.createOscillator(),gg=AC.createGain(),lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=200;o.type='triangle';o.frequency.setValueAtTime(70,t);o.frequency.exponentialRampToValueAtTime(40,t+.6);gg.gain.setValueAtTime(.12,t);gg.gain.exponentialRampToValueAtTime(.0005,t+.8);o.connect(lp);lp.connect(gg);gg.connect(M);o.start(t);o.stop(t+.9);}
+function audioTick(){if(!AC)return;const t=AC.currentTime;M.gain.setTargetAtTime(S.sound?S.vol:0,t,.3);
+ let lv=0,wh=0;for(const p of planes){const near=p.st==='climb'?Math.max(0,1-p.alt/(H*.8)):p.st==='app'?p.u*p.u:1;const v=(p.thr+(p.rev?.6:0))*near*p.a;lv+=v;wh+=v*(p.st==='app'?1:.4);}
+ lv=Math.min(1.2,lv);jetG.gain.setTargetAtTime(.04+.5*lv,t,.8);jetF.frequency.setTargetAtTime(160+260*lv,t,.8);whG.gain.setTargetAtTime(.004*Math.min(1,wh),t,1);
+ windG.gain.setTargetAtTime(.05+.06*rainA+.03*Math.sin(T*.13)**2,t,1);}
+// ---------- loop ----------
+let last=0;
+function frame(now){const dt=Math.min(.1,(now-last)/1000||0);last=now;T+=dt;
+ if(S.cycle&&!Q.has('t'))phase=(phase+dt/CYCLE)%1;
+ if(!Q.has('rain')&&!Q.has('fog')){wxNext-=dt;if(wxNext<=0){wxNext=50+R()*70;if(S.wx==1){const r=R();rainT=r<.25?.5+R()*.5:0;fogT=r>.75?.4+R()*.5:0;}}
+  if(S.wx==0){rainT=0;fogT=0}else if(S.wx==2){rainT=Math.max(rainT,.8);fogT=0}else if(S.wx==3){fogT=Math.max(fogT,.8);rainT=0}
+  rainA+=(rainT-rainA)*dt*.05;fogA+=(fogT-fogA)*dt*.04;}
+ BLOOM=1+fogA*.6+rainA*.2;
+ schedule(dt);for(const p of planes)update(p,dt);planes=planes.filter(p=>!p.dead);
+ const dw=dawnF();
+ sky(dw);drawStars(dw);skyline(dw);ground(dw);
+ const far=planes.filter(p=>p.y<RY-RW*.2&&p.alt<=0),near=planes.filter(p=>!far.includes(p));
+ for(const p of far)drawPlane(p,dw);
+ lights(dw);
+ for(const p of near)drawPlane(p,dw);
+ g.globalAlpha=1;
+ weather(dt,dw);
+ audioTick();
+ requestAnimationFrame(frame);}
+// ---------- UI ----------
+const gear=document.getElementById('gear'),snd=document.getElementById('snd'),panel=document.getElementById('panel'),vol=document.getElementById('vol'),info=document.getElementById('info');
+let hideT=0;if(Q.has('shot'))document.getElementById('title').style.display='none';
+function showUI(){gear.classList.remove('hide');snd.classList.remove('hide');clearTimeout(hideT);hideT=setTimeout(()=>{if(panel.classList.contains('hide')){gear.classList.add('hide');snd.classList.add('hide');}},4000);}
+function refresh(){document.querySelectorAll('.seg').forEach(el=>{const k=el.dataset.k;el.querySelectorAll('button').forEach(b=>b.classList.toggle('on',+b.dataset.v===+S[k]));});vol.value=S.vol;snd.textContent=S.sound?'🔊':'🔇';}
+function setSound(on){S.sound=on?1:0;if(on){initAudio();AC.resume();}refresh();save();}
+document.querySelectorAll('.seg').forEach(el=>el.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const k=el.dataset.k;const v=+b.dataset.v;
+ if(k==='sound')return setSound(v===1);S[k]=v;if(k==='wx')wxNext=0;if(k==='freq')nextOp=Math.min(nextOp,5);refresh();save();}));
+vol.addEventListener('input',()=>{S.vol=+vol.value;save();});
+gear.addEventListener('click',e=>{e.stopPropagation();panel.classList.toggle('hide');showUI();});
+snd.addEventListener('click',e=>{e.stopPropagation();setSound(!S.sound);showUI();});
+panel.addEventListener('click',e=>e.stopPropagation());
+document.addEventListener('click',()=>{if(!panel.classList.contains('hide'))panel.classList.add('hide');showUI();document.getElementById('title').style.opacity=0;try{navigator.wakeLock&&navigator.wakeLock.request('screen')}catch(e){}});
+const stName=p=>({app:'着陸進入中',roll:'着陸滑走',exit:'誘導路へ',taxi:'地上走行',gate:'駐機',park:'出発準備',enter:'滑走路へ',line:'離陸待機',tor:'離陸滑走',climb:'上昇中'})[p.st];
+setInterval(()=>{const dw=dawnF(),p=phase%1;const act=planes.filter(q=>q.st!=='gate'&&q.st!=='park').map(stName);info.textContent=`いま：${!S.cycle?'夜':dw>.5?'夜明け':p<.45?'夜更け':p>.92?'夜':'明け方'}　/　天気 ${fogA>.3?'霧':rainA>.3?'雨':'晴れ'}　/　${act.length?act.join('・'):'静かな滑走路'}`;},1000);
+setTimeout(()=>{document.getElementById('title').style.opacity=0},5000);
+resize();refresh();
+// shot helpers: ?land=u  ?to=st
+if(Q.has('land')){const p=newPlane('land');const v=+Q.get('land');if(v<=1)p.u=v;else{p.u=1;update(p,0);for(let i=0;i<(v-1)*60;i++)update(p,1/60);}}
+if(Q.has('to')){const p=newPlane('to');p.st='tor';p.a=1;p.x=THR-W*.05;p.y=RY;p.k=1;p.dir=-1;p.v=0;for(let i=0;i<+Q.get('to')*60;i++)update(p,1/60);}
+if(Q.has('taxi')){const p=newPlane('to');p.st='taxi';p.a=1;p.x=W*.3;p.goal=W;p.k=.8;}
+requestAnimationFrame(t=>{last=t;requestAnimationFrame(frame)});
+</script>
+</body>
+</html>
